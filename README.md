@@ -21,7 +21,9 @@ prefix       = "omdemo"
 az login #Choose correct username and then the correct subscription to build resources in
 
 terraform init
+
 terraform plan -out tfplan
+
 terraform apply .\tfplan
 
 Establish an ssh tunnel #See ssh_tunnel_command output
