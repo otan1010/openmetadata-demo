@@ -1,27 +1,27 @@
-# OpenMetadata on Azure (Demo/Test) via Terraform
+git clone https://github.com/otan1010/openmetadata-demo.git
+cd .\openmetadata-demo\
 
-## What this creates
-- Resource Group
-- VNet + Subnet
-- NSG restricting inbound access to your CIDR
-- Public IP + NIC
-- Ubuntu VM
-- Docker + Docker Compose
-- OpenMetadata quickstart stack (official compose from pinned release)
-- Terraform-generated SSH keypair written locally
-
-## Prerequisites
-- Terraform >= 1.5
-- Azure CLI authenticated (`az login`)
-- Sufficient Azure subscription permissions
-
-## Usage
-
-1. Create `terraform.tfvars`:
-
+vim .\terraform.tfvars
 ```hcl
-allowed_cidr = "203.0.113.10/32" # Replace with YOUR public IP/CIDR
+allowed_cidr = "111.222.333.444/32" # Replace with YOUR public IP/CIDR
 location     = "westeurope"
 prefix       = "omdemo"
 # optional:
 # openmetadata_release = "1.11.9-release"
+
+az login #Choose correct username and then the correct subscription to build resources in
+
+terraform init
+terraform plan -out tfplan
+terraform apply .\tfplan
+
+Establish an ssh tunnel #See ssh_tunnel_command output
+
+Likely credentials:
+Open Metadata
+Username: admin@open-metadata.org
+Password: admin
+
+Airflow/ingestion
+Username: admin
+Password: admin
