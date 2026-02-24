@@ -1,7 +1,8 @@
-```git clone https://github.com/otan1010/openmetadata-demo.git
-cd .\openmetadata-demo\```
+git clone https://github.com/otan1010/openmetadata-demo.git
+cd .\openmetadata-demo\
 
-```vim .\terraform.tfvars```
+vim .\terraform.tfvars
+
 ```
 allowed_cidr = "111.222.333.444/32" # Replace with YOUR public IP/CIDR
 location     = "westeurope"
@@ -10,11 +11,11 @@ prefix       = "omdemo"
 # openmetadata_release = "1.11.9-release"
 ```
 
-```az login #Choose correct username and then the correct subscription to build resources in```
+az login #Choose correct username and then the correct subscription to build resources in
 
-```terraform init
+terraform init
 terraform plan -out tfplan
-terraform apply .\tfplan```
+terraform apply .\tfplan
 
 Establish an ssh tunnel #See ssh_tunnel_command output
 
