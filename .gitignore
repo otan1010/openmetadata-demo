@@ -59,3 +59,4 @@ terraform.tfstate.backup
 .ssh/
 personal_access_token
 .venv
+*tfplan
