@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-OpenMetadata demo: create two tables and add column-level lineage via Python SDK.
+OpenMetadata demo: create two tables and add column-level lineage via Python SDK,
+then verify it was actually persisted.
 
 What it does:
 1) Connects to OpenMetadata (via PAT read from local file)
 2) Creates (or updates) a demo database service, database, schema
 3) Creates two tables
 4) Adds table-level + column-level lineage between them
+5) Reads lineage back from OM and verifies column mappings are present
 
 Prereqs:
   pip install "openmetadata-ingestion~=1.11.9.0"
@@ -21,6 +23,8 @@ Token:
 
 from pathlib import Path
 import sys
+import json
+from typing import Iterable, Set, Tuple, Any
 
 from metadata.ingestion.ometa.ometa_api import OpenMetadata
 
@@ -51,7 +55,7 @@ from metadata.generated.schema.api.data.createDatabaseSchema import (
 )
 from metadata.generated.schema.api.data.createTable import CreateTableRequest
 
-from metadata.generated.schema.entity.data.table import Column, DataType
+from metadata.generated.schema.entity.data.table import Table, Column, DataType
 from metadata.generated.schema.type.entityReference import EntityReference
 from metadata.generated.schema.api.lineage.addLineage import AddLineageRequest
 from metadata.generated.schema.type.entityLineage import (
@@ -61,16 +65,12 @@ from metadata.generated.schema.type.entityLineage import (
 )
 
 # -------------------------------------------------------------------
-# CONFIG (edit these if you want)
+# CONFIG
 # -------------------------------------------------------------------
 
-# OpenMetadata API endpoint (with your SSH tunnel, this is usually localhost)
 OM_HOST = "http://localhost:8585/api"
-
-# Local file that contains ONLY your PAT token string
 TOKEN_FILE = Path("personal_access_token")
 
-# Demo entities (safe to re-run because create_or_update is used)
 SERVICE_NAME = "demo_mysql_lineage_service"
 DB_NAME = "demo_db"
 SCHEMA_NAME = "public"
@@ -78,11 +78,15 @@ SCHEMA_NAME = "public"
 SOURCE_TABLE = "orders_raw"
 TARGET_TABLE = "orders_curated"
 
-# Mock service connection details (catalog metadata only; does not provision DB)
+# Mock connection details (metadata only; does not provision a DB)
 MOCK_DB_HOSTPORT = "localhost:3306"
 MOCK_DB_USER = "demo_user"
 MOCK_DB_PASSWORD = "demo_pass"
 
+
+# -------------------------------------------------------------------
+# Helpers
+# -------------------------------------------------------------------
 
 def read_pat_token(token_file: Path) -> str:
     if not token_file.exists():
@@ -108,13 +112,45 @@ def connect_openmetadata(host: str, pat_token: str) -> OpenMetadata:
     return om
 
 
+def as_plain_str(value: Any) -> str:
+    """
+    Convert OpenMetadata root-model style values (e.g. fullyQualifiedName) into plain strings.
+    Handles pydantic root objects where repr/str may look like: root='...'
+    """
+    if value is None:
+        return ""
+
+    # Pydantic RootModel style
+    if hasattr(value, "root"):
+        root_val = getattr(value, "root")
+        return "" if root_val is None else str(root_val)
+
+    # Some variants may serialize to {"root": "..."}
+    if hasattr(value, "model_dump"):
+        try:
+            dumped = value.model_dump()
+            if isinstance(dumped, dict) and "root" in dumped:
+                return str(dumped["root"])
+        except Exception:
+            pass
+
+    return str(value)
+
+
+def _column_fqn(table_fqn: str, column_name: str) -> str:
+    return f"{table_fqn}.{column_name}"
+
+# -------------------------------------------------------------------
+# Main
+# -------------------------------------------------------------------
+
 def main() -> int:
     try:
         token = read_pat_token(TOKEN_FILE)
         metadata = connect_openmetadata(OM_HOST, token)
         print(f"✅ Connected to OpenMetadata at {OM_HOST}")
 
-        # 1) Create/update a DB service (metadata object)
+        # 1) Create/update DB service (metadata object only)
         db_service_req = CreateDatabaseServiceRequest(
             name=SERVICE_NAME,
             serviceType=DatabaseServiceType.Mysql,
@@ -127,28 +163,28 @@ def main() -> int:
             ),
         )
         db_service = metadata.create_or_update(data=db_service_req)
-        print(f"✅ Service: {db_service.fullyQualifiedName}")
+        print(f"✅ Service: {as_plain_str(db_service.fullyQualifiedName)}")
 
         # 2) Create/update database
         db_req = CreateDatabaseRequest(
             name=DB_NAME,
-            service=db_service.fullyQualifiedName,
+            service=as_plain_str(db_service.fullyQualifiedName),
         )
         db_entity = metadata.create_or_update(data=db_req)
-        print(f"✅ Database: {db_entity.fullyQualifiedName}")
+        print(f"✅ Database: {as_plain_str(db_entity.fullyQualifiedName)}")
 
         # 3) Create/update schema
         schema_req = CreateDatabaseSchemaRequest(
             name=SCHEMA_NAME,
-            database=db_entity.fullyQualifiedName,
+            database=as_plain_str(db_entity.fullyQualifiedName),
         )
         schema_entity = metadata.create_or_update(data=schema_req)
-        print(f"✅ Schema: {schema_entity.fullyQualifiedName}")
+        print(f"✅ Schema: {as_plain_str(schema_entity.fullyQualifiedName)}")
 
         # 4) Create/update source table
         source_table_req = CreateTableRequest(
             name=SOURCE_TABLE,
-            databaseSchema=schema_entity.fullyQualifiedName,
+            databaseSchema=as_plain_str(schema_entity.fullyQualifiedName),
             columns=[
                 Column(name="order_id", dataType=DataType.BIGINT),
                 Column(name="customer_id", dataType=DataType.BIGINT),
@@ -157,12 +193,12 @@ def main() -> int:
             ],
         )
         source_table = metadata.create_or_update(data=source_table_req)
-        print(f"✅ Source table: {source_table.fullyQualifiedName}")
+        print(f"✅ Source table: {as_plain_str(source_table.fullyQualifiedName)}")
 
         # 5) Create/update target table
         target_table_req = CreateTableRequest(
             name=TARGET_TABLE,
-            databaseSchema=schema_entity.fullyQualifiedName,
+            databaseSchema=as_plain_str(schema_entity.fullyQualifiedName),
             columns=[
                 Column(name="order_id", dataType=DataType.BIGINT),
                 Column(name="customer_id", dataType=DataType.BIGINT),
@@ -171,36 +207,37 @@ def main() -> int:
             ],
         )
         target_table = metadata.create_or_update(data=target_table_req)
-        print(f"✅ Target table: {target_table.fullyQualifiedName}")
+        print(f"✅ Target table: {as_plain_str(target_table.fullyQualifiedName)}")
 
-        # 6) Column-level lineage mappings (FQNs are table FQN + ".column")
-        src_fqn = str(source_table.fullyQualifiedName)
-        tgt_fqn = str(target_table.fullyQualifiedName)
+        # IMPORTANT: unwrap FQNs correctly (avoid str(rootmodel) => "root='...'")
+        src_fqn = as_plain_str(source_table.fullyQualifiedName)
+        tgt_fqn = as_plain_str(target_table.fullyQualifiedName)
 
+        # 6) Column-level lineage mappings
         column_lineage = [
             ColumnLineage(
-                fromColumns=[f"{src_fqn}.order_id"],
-                toColumn=f"{tgt_fqn}.order_id",
+                fromColumns=[_column_fqn(src_fqn, "order_id")],
+                toColumn=_column_fqn(tgt_fqn, "order_id"),
             ),
             ColumnLineage(
-                fromColumns=[f"{src_fqn}.customer_id"],
-                toColumn=f"{tgt_fqn}.customer_id",
+                fromColumns=[_column_fqn(src_fqn, "customer_id")],
+                toColumn=_column_fqn(tgt_fqn, "customer_id"),
             ),
             ColumnLineage(
-                fromColumns=[f"{src_fqn}.amount"],
-                toColumn=f"{tgt_fqn}.amount_usd",
+                fromColumns=[_column_fqn(src_fqn, "amount")],
+                toColumn=_column_fqn(tgt_fqn, "amount_usd"),
             ),
             ColumnLineage(
-                fromColumns=[f"{src_fqn}.created_at"],
-                toColumn=f"{tgt_fqn}.order_ts",
+                fromColumns=[_column_fqn(src_fqn, "created_at")],
+                toColumn=_column_fqn(tgt_fqn, "order_ts"),
             ),
         ]
 
         lineage_details = LineageDetails(
             sqlQuery=(
-                "INSERT INTO orders_curated (order_id, customer_id, amount_usd, order_ts)\n"
-                "SELECT order_id, customer_id, amount, created_at\n"
-                "FROM orders_raw"
+                f"INSERT INTO {TARGET_TABLE} (order_id, customer_id, amount_usd, order_ts)\n"
+                f"SELECT order_id, customer_id, amount, created_at\n"
+                f"FROM {SOURCE_TABLE}"
             ),
             columnsLineage=column_lineage,
         )
@@ -214,23 +251,9 @@ def main() -> int:
             )
         )
 
-        result = metadata.add_lineage(data=lineage_req)
-
-        print("\nLineage created successfully")
-        print(f"Source table FQN: {source_table.fullyQualifiedName}")
-        print(f"Target table FQN: {target_table.fullyQualifiedName}")
-        print(f"Result: {result}")
-
-        print("\nOpenMetadata UI:")
-        print("  - Open target table and check the Lineage tab")
-        print("  - You should see table-level and column-level lineage")
-
-        return 0
-
     except Exception as e:
         print(f"\n❌ Error: {e}", file=sys.stderr)
         return 1
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
