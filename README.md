@@ -8,7 +8,7 @@ location     = "westeurope"
 prefix       = "omdemo"
 # optional:
 # openmetadata_release = "1.11.9-release"
-hcl```
+```hcl
 
 az login #Choose correct username and then the correct subscription to build resources in
 
