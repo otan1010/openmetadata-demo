@@ -140,6 +140,168 @@ def as_plain_str(value: Any) -> str:
 def _column_fqn(table_fqn: str, column_name: str) -> str:
     return f"{table_fqn}.{column_name}"
 
+
+def _iter_edges(lineage_graph) -> Iterable:
+    """
+    Return all edges from lineage graph, supporting both:
+    - {"edges": [...]}
+    - {"upstreamEdges": [...], "downstreamEdges": [...]}
+    and object/pydantic versions of the same.
+    """
+    if lineage_graph is None:
+        return []
+
+    if isinstance(lineage_graph, dict):
+        if "edges" in lineage_graph and lineage_graph.get("edges") is not None:
+            return lineage_graph.get("edges") or []
+        return (lineage_graph.get("upstreamEdges") or []) + (lineage_graph.get("downstreamEdges") or [])
+
+    edges = getattr(lineage_graph, "edges", None)
+    if edges is not None:
+        return edges
+
+    upstream = getattr(lineage_graph, "upstreamEdges", None) or []
+    downstream = getattr(lineage_graph, "downstreamEdges", None) or []
+    return list(upstream) + list(downstream)
+
+
+def _edge_from_to_ids(edge) -> Tuple[str, str]:
+    """
+    Extract (fromEntity.id, toEntity.id) from edge object/dict.
+    Supports both:
+    - {"fromEntity":"<uuid>", "toEntity":"<uuid>"}
+    - {"fromEntity":{"id":"<uuid>"}, "toEntity":{"id":"<uuid>"}}
+    """
+    if isinstance(edge, dict):
+        frm_raw = edge.get("fromEntity")
+        to_raw = edge.get("toEntity")
+
+        frm = frm_raw.get("id") if isinstance(frm_raw, dict) else frm_raw
+        to = to_raw.get("id") if isinstance(to_raw, dict) else to_raw
+
+        return str(frm), str(to)
+
+    frm_raw = getattr(edge, "fromEntity", None)
+    to_raw = getattr(edge, "toEntity", None)
+
+    frm = getattr(frm_raw, "id", frm_raw)
+    to = getattr(to_raw, "id", to_raw)
+
+    return str(frm), str(to)
+
+
+def _extract_columns_lineage_pairs(edge) -> Set[Tuple[str, str]]:
+    """
+    Returns set of (from_col_fqn, to_col_fqn) pairs from edge.lineageDetails.columnsLineage.
+    """
+    pairs: Set[Tuple[str, str]] = set()
+
+    if isinstance(edge, dict):
+        lineage_details = edge.get("lineageDetails") or {}
+        columns_lineage = lineage_details.get("columnsLineage") or []
+        for item in columns_lineage:
+            to_col = item.get("toColumn")
+            for from_col in (item.get("fromColumns") or []):
+                if from_col and to_col:
+                    pairs.add((str(from_col), str(to_col)))
+        return pairs
+
+    lineage_details = getattr(edge, "lineageDetails", None)
+    if not lineage_details:
+        return pairs
+
+    for item in (getattr(lineage_details, "columnsLineage", None) or []):
+        to_col = getattr(item, "toColumn", None)
+        for from_col in (getattr(item, "fromColumns", None) or []):
+            if from_col and to_col:
+                pairs.add((str(from_col), str(to_col)))
+
+    return pairs
+
+
+def _debug_dump_json(label: str, obj: Any) -> None:
+    print(f"\n[Debug] {label}:")
+    try:
+        if hasattr(obj, "model_dump"):
+            print(json.dumps(obj.model_dump(), indent=2, default=str))
+        elif hasattr(obj, "dict"):
+            print(json.dumps(obj.dict(), indent=2, default=str))
+        elif isinstance(obj, dict):
+            print(json.dumps(obj, indent=2, default=str))
+        else:
+            print(str(obj))
+    except Exception as err:
+        print(f"(Could not serialize object: {err})")
+        print(str(obj))
+
+
+def verify_lineage(
+    metadata: OpenMetadata,
+    source_table,
+    target_table,
+    expected_pairs: Set[Tuple[str, str]],
+) -> None:
+    """
+    Read lineage graph back and assert the edge contains the expected column lineage mappings.
+    """
+    source_id = str(source_table.id)
+    target_id = str(target_table.id)
+    source_fqn = as_plain_str(source_table.fullyQualifiedName)
+    target_fqn = as_plain_str(target_table.fullyQualifiedName)
+
+    lineage_graph = metadata.get_lineage_by_name(
+        entity=Table,
+        fqn=target_fqn,
+        up_depth=1,
+        down_depth=1,
+    )
+
+    print("\n[Debug] target_fqn used for get_lineage_by_name:")
+    print(f"  {target_fqn}")
+
+    _debug_dump_json("Read-back lineage graph (json-friendly)", lineage_graph)
+
+    matching_edge = None
+    for edge in _iter_edges(lineage_graph):
+        frm_id, to_id = _edge_from_to_ids(edge)
+        if frm_id == source_id and to_id == target_id:
+            matching_edge = edge
+            break
+
+    if matching_edge is None:
+        raise AssertionError(
+            "Lineage edge was not found in read-back lineage graph.\n"
+            f"Expected edge: {source_fqn} -> {target_fqn}"
+        )
+
+    actual_pairs = _extract_columns_lineage_pairs(matching_edge)
+
+    missing = expected_pairs - actual_pairs
+    extra = actual_pairs - expected_pairs
+
+    print("\n[Verification]")
+    print(f"Expected column mappings: {len(expected_pairs)}")
+    print(f"Actual column mappings on edge: {len(actual_pairs)}")
+
+    if missing:
+        print("Missing mappings:")
+        for src_col, tgt_col in sorted(missing):
+            print(f"  - {src_col} -> {tgt_col}")
+
+    if extra:
+        print("Extra mappings (not expected by this script):")
+        for src_col, tgt_col in sorted(extra):
+            print(f"  - {src_col} -> {tgt_col}")
+
+    if missing:
+        raise AssertionError(
+            "Column-level lineage was NOT fully persisted. "
+            "The lineage edge exists, but one or more columnsLineage entries are missing."
+        )
+
+    print("✅ Column-level lineage verified in OpenMetadata API read-back.")
+
+
 # -------------------------------------------------------------------
 # Main
 # -------------------------------------------------------------------
@@ -213,6 +375,10 @@ def main() -> int:
         src_fqn = as_plain_str(source_table.fullyQualifiedName)
         tgt_fqn = as_plain_str(target_table.fullyQualifiedName)
 
+        print("\n[Debug] Plain FQNs:")
+        print(f"  src_fqn = {src_fqn}")
+        print(f"  tgt_fqn = {tgt_fqn}")
+
         # 6) Column-level lineage mappings
         column_lineage = [
             ColumnLineage(
@@ -251,9 +417,14 @@ def main() -> int:
             )
         )
 
+        result = metadata.add_lineage(data=lineage_req)
+
+        return 0
+
     except Exception as e:
         print(f"\n❌ Error: {e}", file=sys.stderr)
         return 1
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
