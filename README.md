@@ -36,4 +36,4 @@ Create access token, paste into "personal_access_token"
 
 run python .\om_column_lineage_demo.py
 
-Check out the results under "explore"
+Check out the results under "explore" and lineage for one of the tables. Don't forget to check "Layers">"Columns" in the lineage view.
