@@ -32,6 +32,8 @@ Open Metadata
 Username: admin@open-metadata.org
 Password: admin
 
-Airflow/ingestion
-Username: admin
-Password: admin
+Create access token, paste into "personal_access_token"
+
+run python .\om_column_lineage_demo.py
+
+Check out the results under "explore"
