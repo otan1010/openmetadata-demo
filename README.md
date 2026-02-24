@@ -1,4 +1,5 @@
 git clone https://github.com/otan1010/openmetadata-demo.git
+
 cd .\openmetadata-demo\
 
 vim .\terraform.tfvars
