@@ -1,53 +1,61 @@
 variable "prefix" {
-  description = "Prefix used for all resource names"
+  description = "Prefix for Azure resource names."
   type        = string
   default     = "omdemo"
 }
 
 variable "location" {
-  description = "Azure region"
+  description = "Azure region."
   type        = string
   default     = "westeurope"
 }
 
 variable "admin_username" {
-  description = "Admin username for the VM"
+  description = "Linux admin username for the VM."
   type        = string
   default     = "azureuser"
 }
 
-variable "ssh_public_key" {
-  description = "SSH public key content (e.g. ~/.ssh/id_ed25519.pub)"
+variable "allowed_cidr" {
+  description = "CIDR allowed to access SSH and OpenMetadata (e.g. 203.0.113.10/32)."
   type        = string
+
+  validation {
+    condition     = can(cidrhost(var.allowed_cidr, 0))
+    error_message = "allowed_cidr must be a valid CIDR block, e.g. 203.0.113.10/32."
+  }
 }
 
 variable "vm_size" {
-  description = "VM size for OpenMetadata demo. 4 vCPU / 16 GB RAM recommended."
+  description = "Azure VM size (demo/test)."
   type        = string
   default     = "Standard_D4s_v5"
 }
 
-variable "allowed_ssh_cidr" {
-  description = "CIDR allowed to SSH to the VM"
+variable "ssh_private_key_output_path" {
+  description = "Local path where Terraform will write the generated private key."
   type        = string
-  default     = "0.0.0.0/0"
+  default     = "./.ssh/openmetadata-demo-id_rsa"
 }
 
-variable "openmetadata_version" {
-  description = "OpenMetadata Docker image tag"
-  type        = string
-  default     = "1.10.4"
-}
-
-variable "docker_compose_file_url" {
-  description = "Official OpenMetadata docker compose file URL"
-  type        = string
-  # For demo use, pin to a known version. Adjust as needed.
-  default     = "https://raw.githubusercontent.com/open-metadata/OpenMetadata/1.10.4/docker/docker-compose-openmetadata.yml"
-}
-
-variable "public_http_port" {
-  description = "Port exposed for OpenMetadata UI/API"
+variable "openmetadata_port" {
+  description = "OpenMetadata UI/API port exposed on the VM."
   type        = number
   default     = 8585
+}
+
+variable "openmetadata_release" {
+  description = "Pinned OpenMetadata GitHub release tag for quickstart compose."
+  type        = string
+  default     = "1.11.9-release"
+}
+
+variable "tags" {
+  description = "Tags to apply to Azure resources."
+  type        = map(string)
+  default = {
+    environment = "demo"
+    purpose     = "openmetadata-test"
+    managed-by  = "terraform"
+  }
 }
