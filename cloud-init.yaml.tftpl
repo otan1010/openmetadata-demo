@@ -1,0 +1,73 @@
+#cloud-config
+package_update: true
+package_upgrade: false
+
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - apt-transport-https
+  - software-properties-common
+  - jq
+
+write_files:
+  - path: /opt/openmetadata/setup.sh
+    permissions: "0755"
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      set -euxo pipefail
+
+      export DEBIAN_FRONTEND=noninteractive
+
+      # Install Docker Engine + Compose plugin
+      install -m 0755 -d /etc/apt/keyrings
+      if [ ! -f /etc/apt/keyrings/docker.asc ]; then
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+        chmod a+r /etc/apt/keyrings/docker.asc
+      fi
+
+      ARCH="$(dpkg --print-architecture)"
+      CODENAME="$(. /etc/os-release && echo "$VERSION_CODENAME")"
+      echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${CODENAME} stable" \
+        > /etc/apt/sources.list.d/docker.list
+
+      apt-get update
+      apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+      systemctl enable docker
+      systemctl start docker
+
+      mkdir -p /opt/openmetadata
+      cd /opt/openmetadata
+
+      curl -fsSL "${docker_compose_file_url}" -o docker-compose-openmetadata.yml
+
+      # Create .env for overrides used by compose (some versions honor this pattern)
+      cat > .env <<EOF
+      OPENMETADATA_VERSION=${openmetadata_version}
+      EOF
+
+      # Patch the compose for public port exposure if needed
+      # This is a best-effort text patch for common compose layouts.
+      # If compose already exposes 8585->8585, this is harmless.
+      python3 - <<'PY'
+      import re, pathlib
+      p = pathlib.Path("/opt/openmetadata/docker-compose-openmetadata.yml")
+      s = p.read_text()
+      # Ensure exposed port mapping uses requested public port.
+      s = s.replace('"8585:8585"', '"${public_http_port}:8585"')
+      s = s.replace("'8585:8585'", "'${public_http_port}:8585'")
+      p.write_text(s)
+      PY
+
+      # Start services
+      docker compose -f docker-compose-openmetadata.yml up -d
+
+      # Wait and print status for logs
+      sleep 20
+      docker compose -f docker-compose-openmetadata.yml ps || true
+
+runcmd:
+  - [ bash, -lc, "/opt/openmetadata/setup.sh > /var/log/openmetadata-setup.log 2>&1" ]

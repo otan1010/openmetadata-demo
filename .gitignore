@@ -5,6 +5,9 @@
 *.tfstate
 *.tfstate.*
 
+#ignore lock file since this is supposed to be just a local demo
+.terraform.lock.hcl
+
 # Crash log files
 crash.log
 crash.*.log
@@ -35,3 +38,14 @@ override.tf.json
 # Ignore CLI configuration files
 .terraformrc
 terraform.rc
+
+# Temporary
+.netrwhist
+*~
+# Auto-generated tag files
+tags
+# Persistent undo
+[._]*.un~
+
+#keys
+*.pem
